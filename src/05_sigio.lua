@@ -474,6 +474,17 @@ end
 function Sig:compact(var)
   var = var or (self.dt and "n" or "t")
   local dt = self.dt
+  if dt then
+    local lo, hi = self:dtSupport()
+    if lo and hi - lo <= 12 then
+      local parts = {}
+      for n = lo, hi do
+        local v = self:eval(n)
+        if cabs(v) > 1e-12 then parts[#parts + 1] = cmul(v, "δ[" .. shiftStr(var, n) .. "]") end
+      end
+      if #parts > 0 then return joinsum(parts) end
+    end
+  end
   local parts = {}
   -- window form
   for i, S in ipairs(self.seg) do

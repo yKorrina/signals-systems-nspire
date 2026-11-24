@@ -265,6 +265,35 @@ end
 local function dtTransform(sig, mode)
   local terms, imps, steps = {}, {}, {}
   local rlo, rhi = 0, INF
+  local flo, fhi = sig:dtSupport()
+  if flo and fhi - flo <= 40 then
+    -- finite-length: write the sum out term by term
+    local qs = function(n)
+      if n == 0 then return "" end
+      if mode == "Z" then return (n == -1) and "z" or ("z^" .. ((n > 0) and "-" or "") .. abs(n)) end
+      return "e^(" .. ((n > 0) and "-" or "") .. "j" .. ((abs(n) == 1) and "" or abs(n)) .. "Ω)"
+    end
+    steps[#steps + 1] = "x is nonzero only for " .. fmtR(flo) .. " ≤ n ≤ " .. fmtR(fhi) .. ", so the sum has a finite number of terms:"
+    local raw, vals = {}, {}
+    for n = flo, fhi do
+      local v = sig:eval(n)
+      raw[#raw + 1] = "x[" .. n .. "]" .. ((n ~= 0) and ("·" .. qs(n)) or "")
+      vals[#vals + 1] = "x[" .. n .. "]=" .. fmtC(v)
+      addDT(terms, v, n, ZERO, 0, 1)
+    end
+    steps[#steps + 1] = "   " .. table.concat(raw, " + ")
+    steps[#steps + 1] = "   values: " .. table.concat(vals, ", ")
+    local parts = {}
+    for n = flo, fhi do
+      local v = sig:eval(n)
+      if cabs(v) > 1e-12 then parts[#parts + 1] = cmul(v, (n == 0) and "1" or qs(n)) end
+    end
+    steps[#steps + 1] = "   = " .. joinsum(parts) .. "   (each x[k]δ[n-k] gives x[k]·" .. ((mode == "Z") and "z^-k" or "e^(-jΩk)") .. ")"
+    local r = {}
+    for _, t in ipairs(terms) do if cabs(t.c) > 1e-11 then t.c = ccln(t.c); r[#r + 1] = t end end
+    table.sort(r, function(a, b) return a.d < b.d end)
+    return r, imps, {lo = 0, hi = INF}, steps
+  end
   for _, pc in ipairs(sig:monoWindows()) do
     for _, m in ipairs(pc.S) do
       local lo, hi = pc.lo, pc.hi

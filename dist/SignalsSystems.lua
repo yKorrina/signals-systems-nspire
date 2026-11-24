@@ -2007,6 +2007,17 @@ end
 function Sig:compact(var)
   var = var or (self.dt and "n" or "t")
   local dt = self.dt
+  if dt then
+    local lo, hi = self:dtSupport()
+    if lo and hi - lo <= 12 then
+      local parts = {}
+      for n = lo, hi do
+        local v = self:eval(n)
+        if cabs(v) > 1e-12 then parts[#parts + 1] = cmul(v, "δ[" .. shiftStr(var, n) .. "]") end
+      end
+      if #parts > 0 then return joinsum(parts) end
+    end
+  end
   local parts = {}
   -- window form
   for i, S in ipairs(self.seg) do
@@ -2490,6 +2501,35 @@ end
 function dtTransform(sig, mode)
   local terms, imps, steps = {}, {}, {}
   local rlo, rhi = 0, INF
+  local flo, fhi = sig:dtSupport()
+  if flo and fhi - flo <= 40 then
+    -- finite-length: write the sum out term by term
+    local qs = function(n)
+      if n == 0 then return "" end
+      if mode == "Z" then return (n == -1) and "z" or ("z^" .. ((n > 0) and "-" or "") .. abs(n)) end
+      return "e^(" .. ((n > 0) and "-" or "") .. "j" .. ((abs(n) == 1) and "" or abs(n)) .. "Ω)"
+    end
+    steps[#steps + 1] = "x is nonzero only for " .. fmtR(flo) .. " ≤ n ≤ " .. fmtR(fhi) .. ", so the sum has a finite number of terms:"
+    local raw, vals = {}, {}
+    for n = flo, fhi do
+      local v = sig:eval(n)
+      raw[#raw + 1] = "x[" .. n .. "]" .. ((n ~= 0) and ("·" .. qs(n)) or "")
+      vals[#vals + 1] = "x[" .. n .. "]=" .. fmtC(v)
+      addDT(terms, v, n, ZERO, 0, 1)
+    end
+    steps[#steps + 1] = "   " .. table.concat(raw, " + ")
+    steps[#steps + 1] = "   values: " .. table.concat(vals, ", ")
+    local parts = {}
+    for n = flo, fhi do
+      local v = sig:eval(n)
+      if cabs(v) > 1e-12 then parts[#parts + 1] = cmul(v, (n == 0) and "1" or qs(n)) end
+    end
+    steps[#steps + 1] = "   = " .. joinsum(parts) .. "   (each x[k]δ[n-k] gives x[k]·" .. ((mode == "Z") and "z^-k" or "e^(-jΩk)") .. ")"
+    local r = {}
+    for _, t in ipairs(terms) do if cabs(t.c) > 1e-11 then t.c = ccln(t.c); r[#r + 1] = t end end
+    table.sort(r, function(a, b) return a.d < b.d end)
+    return r, imps, {lo = 0, hi = INF}, steps
+  end
   for _, pc in ipairs(sig:monoWindows()) do
     for _, m in ipairs(pc.S) do
       local lo, hi = pc.lo, pc.hi
@@ -3209,6 +3249,109 @@ function numFn(ctx, node, var)
     if ok then return v end
     return nil
   end
+end
+-- ===================== NUMERIC SELF-CHECKS =====================
+-- Each transform answer is compared with a direct numeric computation at a test point.
+function okLine(out, label, a, b)
+  local good = near(a, b, 1e-5) or cabs(a - b) < 1e-7
+  if good then
+    out:t("Check at " .. label .. " computed directly = " .. decstr(cln(a.re)) .. (abs(a.im) > 1e-9 and ((a.im < 0) and " - j" or " + j") .. decstr(abs(cln(a.im))) or "") .. ", matches  (OK)")
+  else
+    out:e("Check FAILED at " .. label .. " direct = " .. fmtC(a) .. ", formula = " .. fmtC(b) .. "  (please report this input)")
+  end
+  return good
+end
+
+-- numeric ∫ x(t) e^{-s t} dt over the signal pieces, plus impulses
+function numLaplace(sig, s0)
+  local total = ZERO
+  for _, pc in ipairs(sig:pieces()) do
+    local lo, hi = math.max(pc.lo, -60), math.min(pc.hi, 60)
+    if hi > lo then
+      local n = math.min(4000, math.max(200, math.ceil((hi - lo) * 60)))
+      total = total + simpson(function(t) return segEval(pc.S, t, false) * cexp(-s0 * t) end, lo, hi, n)
+    end
+  end
+  for _, im in ipairs(sig.imps) do total = total + im.c * cpow(s0, im.m) * cexp(-s0 * im.t0) end
+  return total
+end
+function numZ(sig, z0)
+  local lo, hi = -400, 400
+  local s = ZERO
+  for n = lo, hi do
+    local v = sig:eval(n)
+    if not isz(v, 0) then s = s + v * cpow(z0, -n) end
+  end
+  return s
+end
+
+function checkForward(sig, mode, T, I, roc, out)
+  if I and #I > 0 then
+    out:t("Check: (impulses in the answer, numeric check skipped)")
+    return
+  end
+  local ok = pcall(function()
+    if mode == "Z" or mode == "D" then
+      local z0
+      if mode == "D" then z0 = cexp(cx(0, 0.7))
+      else
+        local r0
+        if roc.hi == INF then r0 = math.max(roc.lo * 1.5, roc.lo + 0.5, 1.2) else r0 = (roc.lo + roc.hi) / 2 end
+        z0 = cexp(cx(0, 0.7)) * r0
+      end
+      local direct = numZ(sig, z0)
+      local formula = dtEval(T, (mode == "Z") and z0 or 0.7, mode == "Z")
+      okLine(out, (mode == "Z") and ("z = " .. fmtR(cabs(z0)) .. "e^(j0.7):") or "Ω = 0.7:", direct, formula)
+    else
+      local s0
+      if mode == "F" then s0 = cx(0, 0.7)
+      else
+        local sig0
+        if roc.lo > -INF and roc.hi < INF then sig0 = (roc.lo + roc.hi) / 2
+        elseif roc.lo > -INF then sig0 = roc.lo + 1
+        elseif roc.hi < INF then sig0 = roc.hi - 1
+        else sig0 = 0 end
+        s0 = cx(sig0, 0.7)
+      end
+      local direct = numLaplace(sig, s0)
+      local formula = ftEval(T, s0)
+      okLine(out, (mode == "F") and "ω = 0.7:" or ("s = " .. fmtC(s0) .. ":"), direct, formula)
+    end
+  end)
+  if not ok then out:t("Check: (numeric check not possible here)") end
+end
+
+-- inverse: transform the answer back and compare with the given X at a test point
+function checkInverse(src, mode, env, sig, hasSynth, roc, out)
+  if hasSynth then return end
+  local node = parse(src)
+  if contains(node, function(n) return n.k == "call" and (n.name == "delta" or n.name == "rect") or n.k == "cmp" end) then return end
+  local ok, err = pcall(function()
+    local dt = (mode == "D" or mode == "Z")
+    local fv = FVAR[mode]
+    if dt then
+      local _, _, rc = dtTransform(sig, "Z")
+      local r0
+      if rc.hi == INF then r0 = math.max(rc.lo * 1.5, rc.lo + 0.5, 1.2) else r0 = (rc.lo + rc.hi) / 2 end
+      if mode == "D" then r0 = 1 end
+      local z0 = cexp(cx(0, 0.7)) * r0
+      env.vars[fv] = (mode == "D") and cx(0.7) or z0
+      local given = evalN(node, env)
+      local back = numZ(sig, z0)
+      okLine(out, ((mode == "D") and "Ω = 0.7" or ("z = " .. fmtR(r0) .. "e^(j0.7)")) .. ": Σ x[n]z^-n of the answer =", back, given)
+    else
+      local s0
+      if mode == "F" then s0 = cx(0, 0.7); env.vars[fv] = cx(0.7)
+      else
+        local _, _, rc = ctTransform(sig, "L")
+        local sg = (rc.lo > -INF and rc.hi < INF) and (rc.lo + rc.hi) / 2 or ((rc.lo > -INF) and rc.lo + 1 or ((rc.hi < INF) and rc.hi - 1 or 0))
+        s0 = cx(sg, 0.7); env.vars[fv] = s0
+      end
+      local given = evalN(node, env)
+      local back = numLaplace(sig, s0)
+      okLine(out, ((mode == "F") and "ω = 0.7" or ("s = " .. fmtC(s0))) .. ": ∫x(t)e^(-st)dt of the answer =", back, given)
+    end
+  end)
 end
 -- ===================== TOOLS (part A) =====================
 function sampleIn(lo, hi, dt)
@@ -4352,8 +4495,9 @@ function fwdTool(name, mode, dtMode, help, def)
         out:t(mode == "F" and "X(jω) = ∫ x(t)e^(-jωt) dt" or "X(s) = ∫ x(t)e^(-st) dt")
         T, I, roc, steps = ctTransform(X, mode)
       end
-      out:t("Split x into exponential pieces:")
-      for _, pc in ipairs(X:monoWindows()) do
+      local fl0 = dtMode and X:dtSupport()
+      if not (fl0 and select(2, X:dtSupport()) - fl0 <= 40) then out:t("Split x into exponential pieces:") end
+      for _, pc in ipairs((fl0 and select(2, X:dtSupport()) - fl0 <= 40) and {} or X:monoWindows()) do
         for _, m in ipairs(pc.S) do out:t("  " .. pieceStr(m.c, m.k, m.s, pc.lo, pc.hi, var, dtMode)) end
       end
       for _, s in ipairs(steps) do out:t("  " .. s) end
@@ -4381,8 +4525,18 @@ function fwdTool(name, mode, dtMode, help, def)
         out:r("ROC: " .. (roc.lo > -INF and (fmtR(roc.lo) .. " < ") or "") .. "Re{s}" .. (roc.hi < INF and (" < " .. fmtR(roc.hi)) or "") .. ((roc.lo == -INF and roc.hi == INF) and " (entire plane)" or ""))
         if roc.lo >= roc.hi then out:e("ROC is empty → Laplace transform does not exist") end
       elseif mode == "Z" then
-        out:r("ROC: " .. ((roc.lo > 0) and (fmtR(roc.lo) .. " < ") or "") .. "|z|" .. (roc.hi < INF and (" < " .. fmtR(roc.hi)) or "") .. ((roc.lo == 0 and roc.hi == INF) and " (all z, maybe except 0)" or ""))
+        if roc.lo == 0 and roc.hi == INF then
+          local pos, neg = false, false
+          for _, t in ipairs(T) do if t.d > 0 then pos = true elseif t.d < 0 then neg = true end end
+          local ex = {}
+          if pos then ex[#ex + 1] = "z = 0" end
+          if neg then ex[#ex + 1] = "z = ∞" end
+          out:r("ROC: all z" .. ((#ex > 0) and (" except " .. table.concat(ex, " and ")) or "") .. "  (finite-length signal)")
+        else
+          out:r("ROC: " .. ((roc.lo > 0) and (fmtR(roc.lo) .. " < ") or "") .. "|z|" .. (roc.hi < INF and (" < " .. fmtR(roc.hi)) or ""))
+        end
       end
+      checkForward(X, mode, T, I, roc, out)
       if mode == "F" then
         out:plot({kind = "freq", f = function(w) return ftEval(T, cx(0, w)) end, label = "|X(jω)|", mode = "F", imps = I})
       elseif mode == "D" then
@@ -4431,6 +4585,7 @@ function invTool(name, mode, help, def, rocLabel)
       if synT and #synT > 0 then
         out:t("(at " .. var .. " = shift point use the limit; e.g. integrate X directly)")
       end
+      checkInverse(v[1], mode, ctx.env, sig, synT and #synT > 0, roc, out)
       local f = function(t)
         local val = sig:eval(t)
         if synT and #synT > 0 then val = val + synthEval(synT, t) end
@@ -5344,10 +5499,10 @@ function buildHome()
     {label = "Search tools / examples / tables", kind = "search"},
     {label = "Example problems (" .. #EXAMPLES .. ")", kind = "examples"},
     {label = "Reference tables (pairs, properties)", kind = "refs"},
-    {label = "* Definitions  x(t), h(t), params", kind = "defs"},
+    {label = "Definitions  x(t), h(t), params", kind = "defs"},
   }
   for i, t in ipairs(TOOLS) do HOME_ITEMS[#HOME_ITEMS + 1] = {label = i .. ". " .. t.name, kind = "tool", idx = i} end
-  HOME_ITEMS[#HOME_ITEMS + 1] = {label = "? Syntax help & keys", kind = "help"}
+  HOME_ITEMS[#HOME_ITEMS + 1] = {label = "Syntax help & keys", kind = "help"}
 end
 
 HELP = {
@@ -5452,15 +5607,16 @@ end
 
 -- ---------- painting: header/footer ----------
 function header(gc, title, right)
-  col(gc, 30, 60, 120); gc:fillRect(0, 0, W(), 17)
-  col(gc, 255, 255, 255); setFont(gc, "b", 9)
+  col(gc, 0, 0, 0); setFont(gc, "b", 10)
   gc:drawString(title, 4, 1, "top")
-  if right then setFont(gc, "r", 7); gc:drawString(right, W() - sw(gc, right) - 4, 3, "top") end
+  if right then col(gc, 110, 110, 110); setFont(gc, "r", 7); gc:drawString(right, W() - sw(gc, right) - 4, 4, "top") end
+  col(gc, 160, 160, 160); gc:drawLine(0, 17, W(), 17)
 end
 function footer(gc, s)
-  col(gc, 225, 230, 240); gc:fillRect(0, Hh() - 13, W(), 13)
-  col(gc, 60, 60, 60); setFont(gc, "r", 7)
-  gc:drawString(s, 3, Hh() - 13, "top")
+  col(gc, 255, 255, 255); gc:fillRect(0, Hh() - 13, W(), 13)
+  col(gc, 160, 160, 160); gc:drawLine(0, Hh() - 13, W(), Hh() - 13)
+  col(gc, 90, 90, 90); setFont(gc, "r", 7)
+  gc:drawString(s, 3, Hh() - 12, "top")
 end
 
 function paintHome(gc)
@@ -5472,7 +5628,7 @@ function paintHome(gc)
   if App.sel >= App.top + rows then App.top = App.sel - rows + 1 end
   for i = App.top, math.min(#HOME_ITEMS, App.top + rows - 1) do
     local y = 19 + (i - App.top) * lh
-    if i == App.sel then col(gc, 200, 220, 255); gc:fillRect(2, y, W() - 4, lh) end
+    if i == App.sel then col(gc, 215, 215, 215); gc:fillRect(2, y, W() - 4, lh) end
     col(gc, 0, 0, 0)
     gc:drawString(HOME_ITEMS[i].label, 6, y, "top")
   end
@@ -5493,8 +5649,8 @@ function paintFields(gc, title, help)
     setFont(gc, "r", 9); col(gc, 40, 40, 40)
     if App.screen ~= "defs" then gc:drawString(f[1], 4, y, "top"); y = y + 12 end
     local bx, bw, bh = 4, W() - 8, 18
-    col(gc, active and 255 or 245, active and 255 or 245, active and 255 or 245); gc:fillRect(bx, y, bw, bh)
-    col(gc, active and 30 or 160, active and 90 or 160, active and 200 or 160); gc:drawRect(bx, y, bw, bh)
+    col(gc, 255, 255, 255); gc:fillRect(bx, y, bw, bh)
+    col(gc, active and 0 or 170, active and 0 or 170, active and 0 or 170); gc:drawRect(bx, y, bw, bh)
     setFont(gc, "r", 10); col(gc, 0, 0, 0)
     local s = vals[i] or ""
     local ch = uchars(s)
@@ -5513,19 +5669,19 @@ function paintFields(gc, title, help)
     if active then
       local cx0 = bx + 4 + sw(gc, table.concat(ch, "", start, cp))
       if cp < start then cx0 = bx + 4 end
-      col(gc, 200, 0, 0); gc:fillRect(cx0, y + 2, 2, bh - 4)
+      col(gc, 0, 0, 0); gc:fillRect(cx0, y + 3, 1, bh - 6)
     end
     y = y + bh + 4
   end
   if App.busy then
-    col(gc, 255, 250, 200); gc:fillRect(W() / 2 - 60, Hh() / 2 - 12, 120, 24)
+    col(gc, 255, 255, 255); gc:fillRect(W() / 2 - 60, Hh() / 2 - 12, 120, 24)
     col(gc, 0, 0, 0); gc:drawRect(W() / 2 - 60, Hh() / 2 - 12, 120, 24)
-    setFont(gc, "b", 10); gc:drawString("Working...", W() / 2 - 30, Hh() / 2 - 8, "top")
+    setFont(gc, "r", 10); gc:drawString("Working...", W() / 2 - 30, Hh() / 2 - 8, "top")
   end
   footer(gc, App.screen == "defs" and "up/dn/tab line   enter save   esc back" or "tab/up/dn field   enter solve   esc home")
 end
 
-KCOL = {h = {20, 60, 140}, t = {0, 0, 0}, r = {150, 0, 40}, e = {200, 0, 0}}
+KCOL = {h = {0, 0, 0}, t = {0, 0, 0}, r = {0, 0, 0}, e = {0, 0, 0}}
 function paintResult(gc)
   local t = currentTool()
   local isView = (App.screen == "help" or App.screen == "view")
@@ -5539,7 +5695,7 @@ function paintResult(gc)
       local st = (l.k == "h" or l.k == "r") and "b" or "r"
       setFont(gc, st, 9)
       local txt = l.s
-      if l.k == "h" then txt = txt end
+      if l.k == "e" then txt = "Error: " .. txt:gsub("^Error: ", "") end
       for _, w in ipairs(wrapText(gc, txt, maxw)) do App.rl[#App.rl + 1] = {k = l.k, s = w} end
     end
   end
@@ -5552,8 +5708,7 @@ function paintResult(gc)
     local l = App.rl[App.rscroll + i]
     if not l then break end
     local y = 19 + (i - 1) * lh
-    if l.k == "h" then col(gc, 232, 238, 250); gc:fillRect(0, y, W(), lh) end
-    if l.k == "r" then col(gc, 255, 244, 240); gc:fillRect(0, y, W(), lh) end
+    if l.k == "h" and i > 1 then col(gc, 200, 200, 200); gc:drawLine(0, y, W(), y) end
     local c = KCOL[l.k] or KCOL.t
     col(gc, c[1], c[2], c[3])
     setFont(gc, (l.k == "h" or l.k == "r") and "b" or "r", 9)
@@ -5564,7 +5719,7 @@ function paintResult(gc)
     local th = Hh() - 32
     local bh = math.max(10, th * rows / #App.rl)
     local by = 18 + (th - bh) * App.rscroll / maxs
-    col(gc, 180, 180, 200); gc:fillRect(W() - 4, by, 3, bh)
+    col(gc, 150, 150, 150); gc:fillRect(W() - 3, by, 2, bh)
   end
   footer(gc, isView and "up/dn scroll  l/r page  esc back" or "up/dn scroll  l/r page  G graph  esc edit")
 end
@@ -5680,8 +5835,8 @@ function paintGraph(gc)
   col(gc, 235, 235, 235)
   local xv = math.ceil(g.x0 / xst) * xst
   while xv <= g.x1 do
-    gc:drawLine(X(xv), T, X(xv), B)
-    col(gc, 100, 100, 100)
+    col(gc, 0, 0, 0); gc:drawLine(X(xv), B, X(xv), B - 3)
+    col(gc, 0, 0, 0)
     local lbl = (p.kind == "freq" and p.mode == "D") and fmtR(xv) or decstr(cln(xv))
     gc:drawString(lbl, X(xv) - sw(gc, lbl) / 2, B + 1, "top")
     col(gc, 235, 235, 235)
@@ -5689,14 +5844,14 @@ function paintGraph(gc)
   end
   local yv = math.ceil(g.y0 / ystp) * ystp
   while yv <= g.y1 do
-    gc:drawLine(L, Y(yv), R, Y(yv))
-    col(gc, 100, 100, 100)
+    col(gc, 0, 0, 0); gc:drawLine(L, Y(yv), L + 3, Y(yv))
+    col(gc, 0, 0, 0)
     local lbl = decstr(cln(yv))
     gc:drawString(lbl, L - sw(gc, lbl) - 2, Y(yv) - 5, "top")
     col(gc, 235, 235, 235)
     yv = yv + ystp
   end
-  col(gc, 60, 60, 60)
+  col(gc, 0, 0, 0)
   if g.y0 <= 0 and g.y1 >= 0 then gc:drawLine(L, Y(0), R, Y(0)) end
   if g.x0 <= 0 and g.x1 >= 0 then gc:drawLine(X(0), T, X(0), B) end
   gc:drawRect(L, T, R - L, B - T)
@@ -5713,10 +5868,10 @@ function paintGraph(gc)
       local y = getY(v)
       if y and y == y then
         local px, py = X(n), clipY(Y(y))
-        col(gc, 30, 90, 200)
+        col(gc, 0, 0, 160)
         gc:drawLine(px, clipY(Y(0)), px, py)
         gc:fillArc(px - 2, py - 2, 5, 5, 0, 360)
-        if v and abs(v.im) > 1e-9 then col(gc, 220, 120, 0); gc:fillArc(px - 2, clipY(Y(v.im)) - 2, 5, 5, 0, 360) end
+        if v and abs(v.im) > 1e-9 then col(gc, 160, 0, 0); gc:fillArc(px - 2, clipY(Y(v.im)) - 2, 5, 5, 0, 360) end
       end
     end
   else
@@ -5728,10 +5883,10 @@ function paintGraph(gc)
       if y and y == y and abs(y) < 1e12 then
         local px, py = X(x), Y(y)
         if prevx then
-          if seg ~= prevseg then col(gc, 160, 180, 230) else col(gc, 30, 90, 200) end
+          if seg ~= prevseg then col(gc, 0, 0, 160) else col(gc, 0, 0, 160) end
           gc:drawLine(prevx, clipY(prevy), px, clipY(py))
           if v and p.kind ~= "freq" and previm and abs(v.im) > 1e-9 then
-            col(gc, 220, 120, 0); gc:drawLine(prevx, clipY(previm), px, clipY(Y(v.im)))
+            col(gc, 160, 0, 0); gc:drawLine(prevx, clipY(previm), px, clipY(Y(v.im)))
           end
         end
         prevx, prevy, prevseg = px, py, seg
@@ -5744,7 +5899,7 @@ function paintGraph(gc)
     if x < g.x0 or x > g.x1 then return end
     local px = X(x)
     local y0p, y1p = clipY(Y(0)), clipY(Y(h))
-    col(gc, 200, 30, 30)
+    col(gc, 0, 0, 0)
     gc:drawLine(px, y0p, px, y1p)
     gc:drawLine(px + 1, y0p, px + 1, y1p)
     local d = (h >= 0) and 1 or -1
@@ -5764,7 +5919,7 @@ function paintGraph(gc)
   -- trace
   if g.tr then
     local v = evalPlot(p, g.tr)
-    col(gc, 0, 150, 0)
+    col(gc, 120, 120, 120)
     gc:drawLine(X(g.tr), T, X(g.tr), B)
     local s = (dt and "n=" or ((p.kind == "freq") and (p.mode == "D" and "Ω=" or "ω=") or "t=")) .. decstr(cln(g.tr))
     if v then
@@ -5790,10 +5945,9 @@ function paintList(gc)
     local it = L.items[i]
     local y = 19 + (i - L.top) * lh
     if it.kind == "hdr" then
-      col(gc, 232, 238, 250); gc:fillRect(0, y, W(), lh)
-      col(gc, 20, 60, 140); setFont(gc, "b", 9)
+      col(gc, 0, 0, 0); setFont(gc, "b", 9)
     else
-      if i == L.sel then col(gc, 200, 220, 255); gc:fillRect(2, y, W() - 4, lh) end
+      if i == L.sel then col(gc, 215, 215, 215); gc:fillRect(2, y, W() - 4, lh) end
       col(gc, 0, 0, 0); setFont(gc, "r", 9)
     end
     gc:drawString(it.label, 6, y, "top")
@@ -5804,11 +5958,11 @@ function paintSearch(gc)
   header(gc, "Search", "type words")
   local bx, by, bw, bh = 4, 20, W() - 8, 18
   col(gc, 255, 255, 255); gc:fillRect(bx, by, bw, bh)
-  col(gc, 30, 90, 200); gc:drawRect(bx, by, bw, bh)
+  col(gc, 0, 0, 0); gc:drawRect(bx, by, bw, bh)
   setFont(gc, "r", 10); col(gc, 0, 0, 0)
   local q = App.query or ""
   gc:drawString(q, bx + 4, by + 1, "top")
-  col(gc, 200, 0, 0); gc:fillRect(bx + 4 + sw(gc, q), by + 2, 2, bh - 4)
+  col(gc, 0, 0, 0); gc:fillRect(bx + 4 + sw(gc, q), by + 3, 1, bh - 6)
   local res = App.sres or {}
   setFont(gc, "r", 9)
   local lh = 14
@@ -5823,7 +5977,7 @@ function paintSearch(gc)
   end
   for i = App.stop, math.min(#res, App.stop + rows - 1) do
     local y = 42 + (i - App.stop) * lh
-    if i == App.ssel then col(gc, 200, 220, 255); gc:fillRect(2, y, W() - 4, lh) end
+    if i == App.ssel then col(gc, 215, 215, 215); gc:fillRect(2, y, W() - 4, lh) end
     col(gc, 0, 0, 0)
     gc:drawString(res[i].label, 6, y, "top")
   end

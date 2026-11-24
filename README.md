@@ -70,12 +70,17 @@ The code lives in `src/` as plain Lua 5.1. To build:
 
 This writes `dist/SignalsSystems.lua` (the whole app in one file) and, if [Luna](https://github.com/ndless-nspire/Luna) is installed, `dist/SignalsSystems.tns`. Set `LUNA=/path/to/luna` if it isn't on your PATH. You can also paste `dist/SignalsSystems.lua` into the Script Editor in the TI-Nspire Student Software.
 
-To run every example on a computer:
+To run every example, and the set of hand-checked answers, on a computer:
 
 ```
 cat tests/stubs.lua dist/SignalsSystems.lua tests/run_examples.lua > /tmp/t.lua
 lua5.1 /tmp/t.lua
+
+cat tests/stubs.lua dist/SignalsSystems.lua tests/known_answers.lua > /tmp/t.lua
+lua5.1 /tmp/t.lua
 ```
+
+Every transform and inverse transform also checks its own answer: it computes the value numerically at a test point and compares it with the formula. The result shows "(OK)" at the bottom, or a "Check FAILED" line if something is off.
 
 ### Source layout
 
@@ -86,7 +91,8 @@ lua5.1 /tmp/t.lua
 | `03_eval.lua` | numeric evaluation |
 | `04_signal.lua`, `05_sigio.lua` | exact signal representation, convolution, integration, printing |
 | `06_poly.lua` – `08_inverse.lua` | polynomials, forward and inverse transforms |
-| `09_ctx.lua` – `12b_tools_d.lua` | the tools |
+| `09b_check.lua` | numeric self-checks for transform answers |
+| `09_ctx.lua`, `10_tools_a.lua` – `12b_tools_d.lua` | the tools |
 | `13_ui.lua` | screens, keys, graphing |
 | `14_examples.lua`, `15_ref.lua` | example problems and reference tables |
 

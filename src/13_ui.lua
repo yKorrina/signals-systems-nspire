@@ -14,10 +14,10 @@ local function buildHome()
     {label = "Search tools / examples / tables", kind = "search"},
     {label = "Example problems (" .. #EXAMPLES .. ")", kind = "examples"},
     {label = "Reference tables (pairs, properties)", kind = "refs"},
-    {label = "* Definitions  x(t), h(t), params", kind = "defs"},
+    {label = "Definitions  x(t), h(t), params", kind = "defs"},
   }
   for i, t in ipairs(TOOLS) do HOME_ITEMS[#HOME_ITEMS + 1] = {label = i .. ". " .. t.name, kind = "tool", idx = i} end
-  HOME_ITEMS[#HOME_ITEMS + 1] = {label = "? Syntax help & keys", kind = "help"}
+  HOME_ITEMS[#HOME_ITEMS + 1] = {label = "Syntax help & keys", kind = "help"}
 end
 
 local HELP = {
@@ -122,15 +122,16 @@ end
 
 -- ---------- painting: header/footer ----------
 local function header(gc, title, right)
-  col(gc, 30, 60, 120); gc:fillRect(0, 0, W(), 17)
-  col(gc, 255, 255, 255); setFont(gc, "b", 9)
+  col(gc, 0, 0, 0); setFont(gc, "b", 10)
   gc:drawString(title, 4, 1, "top")
-  if right then setFont(gc, "r", 7); gc:drawString(right, W() - sw(gc, right) - 4, 3, "top") end
+  if right then col(gc, 110, 110, 110); setFont(gc, "r", 7); gc:drawString(right, W() - sw(gc, right) - 4, 4, "top") end
+  col(gc, 160, 160, 160); gc:drawLine(0, 17, W(), 17)
 end
 local function footer(gc, s)
-  col(gc, 225, 230, 240); gc:fillRect(0, Hh() - 13, W(), 13)
-  col(gc, 60, 60, 60); setFont(gc, "r", 7)
-  gc:drawString(s, 3, Hh() - 13, "top")
+  col(gc, 255, 255, 255); gc:fillRect(0, Hh() - 13, W(), 13)
+  col(gc, 160, 160, 160); gc:drawLine(0, Hh() - 13, W(), Hh() - 13)
+  col(gc, 90, 90, 90); setFont(gc, "r", 7)
+  gc:drawString(s, 3, Hh() - 12, "top")
 end
 
 local function paintHome(gc)
@@ -142,7 +143,7 @@ local function paintHome(gc)
   if App.sel >= App.top + rows then App.top = App.sel - rows + 1 end
   for i = App.top, math.min(#HOME_ITEMS, App.top + rows - 1) do
     local y = 19 + (i - App.top) * lh
-    if i == App.sel then col(gc, 200, 220, 255); gc:fillRect(2, y, W() - 4, lh) end
+    if i == App.sel then col(gc, 215, 215, 215); gc:fillRect(2, y, W() - 4, lh) end
     col(gc, 0, 0, 0)
     gc:drawString(HOME_ITEMS[i].label, 6, y, "top")
   end
@@ -163,8 +164,8 @@ local function paintFields(gc, title, help)
     setFont(gc, "r", 9); col(gc, 40, 40, 40)
     if App.screen ~= "defs" then gc:drawString(f[1], 4, y, "top"); y = y + 12 end
     local bx, bw, bh = 4, W() - 8, 18
-    col(gc, active and 255 or 245, active and 255 or 245, active and 255 or 245); gc:fillRect(bx, y, bw, bh)
-    col(gc, active and 30 or 160, active and 90 or 160, active and 200 or 160); gc:drawRect(bx, y, bw, bh)
+    col(gc, 255, 255, 255); gc:fillRect(bx, y, bw, bh)
+    col(gc, active and 0 or 170, active and 0 or 170, active and 0 or 170); gc:drawRect(bx, y, bw, bh)
     setFont(gc, "r", 10); col(gc, 0, 0, 0)
     local s = vals[i] or ""
     local ch = uchars(s)
@@ -183,19 +184,19 @@ local function paintFields(gc, title, help)
     if active then
       local cx0 = bx + 4 + sw(gc, table.concat(ch, "", start, cp))
       if cp < start then cx0 = bx + 4 end
-      col(gc, 200, 0, 0); gc:fillRect(cx0, y + 2, 2, bh - 4)
+      col(gc, 0, 0, 0); gc:fillRect(cx0, y + 3, 1, bh - 6)
     end
     y = y + bh + 4
   end
   if App.busy then
-    col(gc, 255, 250, 200); gc:fillRect(W() / 2 - 60, Hh() / 2 - 12, 120, 24)
+    col(gc, 255, 255, 255); gc:fillRect(W() / 2 - 60, Hh() / 2 - 12, 120, 24)
     col(gc, 0, 0, 0); gc:drawRect(W() / 2 - 60, Hh() / 2 - 12, 120, 24)
-    setFont(gc, "b", 10); gc:drawString("Working...", W() / 2 - 30, Hh() / 2 - 8, "top")
+    setFont(gc, "r", 10); gc:drawString("Working...", W() / 2 - 30, Hh() / 2 - 8, "top")
   end
   footer(gc, App.screen == "defs" and "up/dn/tab line   enter save   esc back" or "tab/up/dn field   enter solve   esc home")
 end
 
-local KCOL = {h = {20, 60, 140}, t = {0, 0, 0}, r = {150, 0, 40}, e = {200, 0, 0}}
+local KCOL = {h = {0, 0, 0}, t = {0, 0, 0}, r = {0, 0, 0}, e = {0, 0, 0}}
 local function paintResult(gc)
   local t = currentTool()
   local isView = (App.screen == "help" or App.screen == "view")
@@ -209,7 +210,7 @@ local function paintResult(gc)
       local st = (l.k == "h" or l.k == "r") and "b" or "r"
       setFont(gc, st, 9)
       local txt = l.s
-      if l.k == "h" then txt = txt end
+      if l.k == "e" then txt = "Error: " .. txt:gsub("^Error: ", "") end
       for _, w in ipairs(wrapText(gc, txt, maxw)) do App.rl[#App.rl + 1] = {k = l.k, s = w} end
     end
   end
@@ -222,8 +223,7 @@ local function paintResult(gc)
     local l = App.rl[App.rscroll + i]
     if not l then break end
     local y = 19 + (i - 1) * lh
-    if l.k == "h" then col(gc, 232, 238, 250); gc:fillRect(0, y, W(), lh) end
-    if l.k == "r" then col(gc, 255, 244, 240); gc:fillRect(0, y, W(), lh) end
+    if l.k == "h" and i > 1 then col(gc, 200, 200, 200); gc:drawLine(0, y, W(), y) end
     local c = KCOL[l.k] or KCOL.t
     col(gc, c[1], c[2], c[3])
     setFont(gc, (l.k == "h" or l.k == "r") and "b" or "r", 9)
@@ -234,7 +234,7 @@ local function paintResult(gc)
     local th = Hh() - 32
     local bh = math.max(10, th * rows / #App.rl)
     local by = 18 + (th - bh) * App.rscroll / maxs
-    col(gc, 180, 180, 200); gc:fillRect(W() - 4, by, 3, bh)
+    col(gc, 150, 150, 150); gc:fillRect(W() - 3, by, 2, bh)
   end
   footer(gc, isView and "up/dn scroll  l/r page  esc back" or "up/dn scroll  l/r page  G graph  esc edit")
 end
@@ -351,8 +351,8 @@ local function paintGraph(gc)
   col(gc, 235, 235, 235)
   local xv = math.ceil(g.x0 / xst) * xst
   while xv <= g.x1 do
-    gc:drawLine(X(xv), T, X(xv), B)
-    col(gc, 100, 100, 100)
+    col(gc, 0, 0, 0); gc:drawLine(X(xv), B, X(xv), B - 3)
+    col(gc, 0, 0, 0)
     local lbl = (p.kind == "freq" and p.mode == "D") and fmtR(xv) or decstr(cln(xv))
     gc:drawString(lbl, X(xv) - sw(gc, lbl) / 2, B + 1, "top")
     col(gc, 235, 235, 235)
@@ -360,14 +360,14 @@ local function paintGraph(gc)
   end
   local yv = math.ceil(g.y0 / ystp) * ystp
   while yv <= g.y1 do
-    gc:drawLine(L, Y(yv), R, Y(yv))
-    col(gc, 100, 100, 100)
+    col(gc, 0, 0, 0); gc:drawLine(L, Y(yv), L + 3, Y(yv))
+    col(gc, 0, 0, 0)
     local lbl = decstr(cln(yv))
     gc:drawString(lbl, L - sw(gc, lbl) - 2, Y(yv) - 5, "top")
     col(gc, 235, 235, 235)
     yv = yv + ystp
   end
-  col(gc, 60, 60, 60)
+  col(gc, 0, 0, 0)
   if g.y0 <= 0 and g.y1 >= 0 then gc:drawLine(L, Y(0), R, Y(0)) end
   if g.x0 <= 0 and g.x1 >= 0 then gc:drawLine(X(0), T, X(0), B) end
   gc:drawRect(L, T, R - L, B - T)
@@ -384,10 +384,10 @@ local function paintGraph(gc)
       local y = getY(v)
       if y and y == y then
         local px, py = X(n), clipY(Y(y))
-        col(gc, 30, 90, 200)
+        col(gc, 0, 0, 160)
         gc:drawLine(px, clipY(Y(0)), px, py)
         gc:fillArc(px - 2, py - 2, 5, 5, 0, 360)
-        if v and abs(v.im) > 1e-9 then col(gc, 220, 120, 0); gc:fillArc(px - 2, clipY(Y(v.im)) - 2, 5, 5, 0, 360) end
+        if v and abs(v.im) > 1e-9 then col(gc, 160, 0, 0); gc:fillArc(px - 2, clipY(Y(v.im)) - 2, 5, 5, 0, 360) end
       end
     end
   else
@@ -399,10 +399,10 @@ local function paintGraph(gc)
       if y and y == y and abs(y) < 1e12 then
         local px, py = X(x), Y(y)
         if prevx then
-          if seg ~= prevseg then col(gc, 160, 180, 230) else col(gc, 30, 90, 200) end
+          if seg ~= prevseg then col(gc, 0, 0, 160) else col(gc, 0, 0, 160) end
           gc:drawLine(prevx, clipY(prevy), px, clipY(py))
           if v and p.kind ~= "freq" and previm and abs(v.im) > 1e-9 then
-            col(gc, 220, 120, 0); gc:drawLine(prevx, clipY(previm), px, clipY(Y(v.im)))
+            col(gc, 160, 0, 0); gc:drawLine(prevx, clipY(previm), px, clipY(Y(v.im)))
           end
         end
         prevx, prevy, prevseg = px, py, seg
@@ -415,7 +415,7 @@ local function paintGraph(gc)
     if x < g.x0 or x > g.x1 then return end
     local px = X(x)
     local y0p, y1p = clipY(Y(0)), clipY(Y(h))
-    col(gc, 200, 30, 30)
+    col(gc, 0, 0, 0)
     gc:drawLine(px, y0p, px, y1p)
     gc:drawLine(px + 1, y0p, px + 1, y1p)
     local d = (h >= 0) and 1 or -1
@@ -435,7 +435,7 @@ local function paintGraph(gc)
   -- trace
   if g.tr then
     local v = evalPlot(p, g.tr)
-    col(gc, 0, 150, 0)
+    col(gc, 120, 120, 120)
     gc:drawLine(X(g.tr), T, X(g.tr), B)
     local s = (dt and "n=" or ((p.kind == "freq") and (p.mode == "D" and "Ω=" or "ω=") or "t=")) .. decstr(cln(g.tr))
     if v then
@@ -461,10 +461,9 @@ local function paintList(gc)
     local it = L.items[i]
     local y = 19 + (i - L.top) * lh
     if it.kind == "hdr" then
-      col(gc, 232, 238, 250); gc:fillRect(0, y, W(), lh)
-      col(gc, 20, 60, 140); setFont(gc, "b", 9)
+      col(gc, 0, 0, 0); setFont(gc, "b", 9)
     else
-      if i == L.sel then col(gc, 200, 220, 255); gc:fillRect(2, y, W() - 4, lh) end
+      if i == L.sel then col(gc, 215, 215, 215); gc:fillRect(2, y, W() - 4, lh) end
       col(gc, 0, 0, 0); setFont(gc, "r", 9)
     end
     gc:drawString(it.label, 6, y, "top")
@@ -475,11 +474,11 @@ local function paintSearch(gc)
   header(gc, "Search", "type words")
   local bx, by, bw, bh = 4, 20, W() - 8, 18
   col(gc, 255, 255, 255); gc:fillRect(bx, by, bw, bh)
-  col(gc, 30, 90, 200); gc:drawRect(bx, by, bw, bh)
+  col(gc, 0, 0, 0); gc:drawRect(bx, by, bw, bh)
   setFont(gc, "r", 10); col(gc, 0, 0, 0)
   local q = App.query or ""
   gc:drawString(q, bx + 4, by + 1, "top")
-  col(gc, 200, 0, 0); gc:fillRect(bx + 4 + sw(gc, q), by + 2, 2, bh - 4)
+  col(gc, 0, 0, 0); gc:fillRect(bx + 4 + sw(gc, q), by + 3, 1, bh - 6)
   local res = App.sres or {}
   setFont(gc, "r", 9)
   local lh = 14
@@ -494,7 +493,7 @@ local function paintSearch(gc)
   end
   for i = App.stop, math.min(#res, App.stop + rows - 1) do
     local y = 42 + (i - App.stop) * lh
-    if i == App.ssel then col(gc, 200, 220, 255); gc:fillRect(2, y, W() - 4, lh) end
+    if i == App.ssel then col(gc, 215, 215, 215); gc:fillRect(2, y, W() - 4, lh) end
     col(gc, 0, 0, 0)
     gc:drawString(res[i].label, 6, y, "top")
   end

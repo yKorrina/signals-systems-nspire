@@ -602,8 +602,9 @@ local function fwdTool(name, mode, dtMode, help, def)
         out:t(mode == "F" and "X(jω) = ∫ x(t)e^(-jωt) dt" or "X(s) = ∫ x(t)e^(-st) dt")
         T, I, roc, steps = ctTransform(X, mode)
       end
-      out:t("Split x into exponential pieces:")
-      for _, pc in ipairs(X:monoWindows()) do
+      local fl0 = dtMode and X:dtSupport()
+      if not (fl0 and select(2, X:dtSupport()) - fl0 <= 40) then out:t("Split x into exponential pieces:") end
+      for _, pc in ipairs((fl0 and select(2, X:dtSupport()) - fl0 <= 40) and {} or X:monoWindows()) do
         for _, m in ipairs(pc.S) do out:t("  " .. pieceStr(m.c, m.k, m.s, pc.lo, pc.hi, var, dtMode)) end
       end
       for _, s in ipairs(steps) do out:t("  " .. s) end
@@ -631,8 +632,18 @@ local function fwdTool(name, mode, dtMode, help, def)
         out:r("ROC: " .. (roc.lo > -INF and (fmtR(roc.lo) .. " < ") or "") .. "Re{s}" .. (roc.hi < INF and (" < " .. fmtR(roc.hi)) or "") .. ((roc.lo == -INF and roc.hi == INF) and " (entire plane)" or ""))
         if roc.lo >= roc.hi then out:e("ROC is empty → Laplace transform does not exist") end
       elseif mode == "Z" then
-        out:r("ROC: " .. ((roc.lo > 0) and (fmtR(roc.lo) .. " < ") or "") .. "|z|" .. (roc.hi < INF and (" < " .. fmtR(roc.hi)) or "") .. ((roc.lo == 0 and roc.hi == INF) and " (all z, maybe except 0)" or ""))
+        if roc.lo == 0 and roc.hi == INF then
+          local pos, neg = false, false
+          for _, t in ipairs(T) do if t.d > 0 then pos = true elseif t.d < 0 then neg = true end end
+          local ex = {}
+          if pos then ex[#ex + 1] = "z = 0" end
+          if neg then ex[#ex + 1] = "z = ∞" end
+          out:r("ROC: all z" .. ((#ex > 0) and (" except " .. table.concat(ex, " and ")) or "") .. "  (finite-length signal)")
+        else
+          out:r("ROC: " .. ((roc.lo > 0) and (fmtR(roc.lo) .. " < ") or "") .. "|z|" .. (roc.hi < INF and (" < " .. fmtR(roc.hi)) or ""))
+        end
       end
+      checkForward(X, mode, T, I, roc, out)
       if mode == "F" then
         out:plot({kind = "freq", f = function(w) return ftEval(T, cx(0, w)) end, label = "|X(jω)|", mode = "F", imps = I})
       elseif mode == "D" then
@@ -681,6 +692,7 @@ local function invTool(name, mode, help, def, rocLabel)
       if synT and #synT > 0 then
         out:t("(at " .. var .. " = shift point use the limit; e.g. integrate X directly)")
       end
+      checkInverse(v[1], mode, ctx.env, sig, synT and #synT > 0, roc, out)
       local f = function(t)
         local val = sig:eval(t)
         if synT and #synT > 0 then val = val + synthEval(synT, t) end
